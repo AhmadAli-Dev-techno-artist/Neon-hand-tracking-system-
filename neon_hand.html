@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Hand Tracker</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: black; 
+        }
+        /* We hide the raw video and only show the canvas */
+        .input_video { 
+            display: none; 
+        }
+        /* CSS trick to mirror the camera like a real mirror */
+        .output_canvas { 
+            width: 100vw; 
+            height: 100vh; 
+            transform: scaleX(-1); 
+            object-fit: cover;
+        }
+        .loading { 
+            position: absolute; 
+            color: #00FFFF; 
+            top: 50%; 
+            width: 100%; 
+            text-align: center; 
+            font-family: sans-serif; 
+            font-size: 20px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="loading" id="loadingText">
+        Waking up the AI...<br><br>
+        ⚠️ Please accept Camera Permissions!
+    </div>
+
+    <video class="input_video" autoplay playsinline></video>
+    
+    <canvas class="output_canvas"></canvas>
+
+    <script>
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        const canvasElement = document.getElementsByClassName('output_canvas')[0];
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingText = document.getElementById('loadingText');
+
+        // This array stores the coordinates for the neon trail
+        let drawnPoints = []; 
+
+        function onResults(results) {
+            // Hide the loading text once the AI successfully reads the camera
+            loadingText.style.display = 'none';
+
+            // Match canvas size to video size
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 1. Draw the actual camera feed onto the canvas
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // 2. Check if the AI detects a hand
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Draw the robotic skeleton (Cyan connections, White joints)
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
+                drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 2});
+
+                // Grab the exact coordinate of the Index Finger Tip (Landmark #8 in MediaPipe)
+                const indexTip = landmarks[8];
+                
+                // Add this current position to our trail memory
+                drawnPoints.push({
+                    x: indexTip.x * canvasElement.width,
+                    y: indexTip.y * canvasElement.height
+                });
+
+                // Keep only the last 40 points so it looks like a floating tail and doesn't lag your phone
+                if (drawnPoints.length > 40) {
+                    drawnPoints.shift();
+                }
+            } else {
+                // If you pull your hand away, clear the trail memory
+                drawnPoints = [];
+            }
+
+            // 3. Draw the glowing Neon Pink trail
+            if (drawnPoints.length > 1) {
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(drawnPoints[0].x, drawnPoints[0].y);
+                for (let i = 1; i < drawnPoints.length; i++) {
+                    canvasCtx.lineTo(drawnPoints[i].x, drawnPoints[i].y);
+                }
+                canvasCtx.strokeStyle = '#FF007F'; // Neon Pink color
+                canvasCtx.lineWidth = 8;           // Thickness of the line
+                canvasCtx.lineCap = 'round';
+                canvasCtx.lineJoin = 'round';
+                canvasCtx.stroke();
+            }
+
+            canvasCtx.restore();
+        }
+
+        // --- AI Configuration ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+        
+        hands.setOptions({
+            maxNumHands: 1,               // Only track 1 hand to save phone battery
+            modelComplexity: 1,           // Balances speed and accuracy
+            minDetectionConfidence: 0.7,  // Strictness for finding the hand
+            minTrackingConfidence: 0.7
+        });
+        
+        hands.onResults(onResults);
+
+        // --- Camera Configuration ---
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement}); // Feed every camera frame into the AI
+            },
+            width: 640,
+            height: 480,
+            facingMode: 'user' // Forces the front-facing selfie camera
+        });
+        
+        camera.start();
+    </script>
+</body>
+</html>
